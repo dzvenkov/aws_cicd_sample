@@ -29,21 +29,27 @@ jobs:
         id: build_tag
         run: echo "BUILD_TAG=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
 
+      # Docker-specific steps in ./SampleApp folder
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
       - name: Docker Login
         run: echo "${TF_VAR_dockerhub_password}" | docker login --username "${TF_VAR_dockerhub_username}" --password-stdin
+        working-directory: SampleApp
 
       - name: Build Docker image
         run: docker build -t sampleapp:${BUILD_TAG} .
+        working-directory: SampleApp
 
       - name: Tag Docker image for Docker Hub
         run: docker tag sampleapp:${BUILD_TAG} ${TF_VAR_dockerhub_username}/sampleapp:${BUILD_TAG}
+        working-directory: SampleApp
 
       - name: Push Docker image
         run: docker push ${TF_VAR_dockerhub_username}/sampleapp:${BUILD_TAG}
+        working-directory: SampleApp
 
+      # Terraform-specific steps in ./terraform folder
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
@@ -51,6 +57,8 @@ jobs:
 
       - name: Terraform Init
         run: terraform init -backend-config="vars/${{ github.event.inputs.environment }}.backend.tfvars"
+        working-directory: terraform
 
       - name: Terraform Apply
         run: terraform apply -auto-approve -var-file="vars/${{ github.event.inputs.environment }}.tfvars" -var="build_tag=${BUILD_TAG}"
+        working-directory: terraform
