@@ -1,0 +1,56 @@
+name: Deploy to env
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Select the deployment environment'
+        required: true
+        type: choice
+        default: 'test'
+        options:
+          - test
+          - prod
+
+jobs:
+  deploy:
+    environment: ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    env:
+      TF_VAR_dockerhub_username: ${{ secrets.TF_VAR_DOCKERHUB_USERNAME }}
+      TF_VAR_dockerhub_password: ${{ secrets.TF_VAR_DOCKERHUB_PASSWORD }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set short build tag
+        id: build_tag
+        run: echo "BUILD_TAG=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Docker Login
+        run: echo "${TF_VAR_dockerhub_password}" | docker login --username "${TF_VAR_dockerhub_username}" --password-stdin
+
+      - name: Build Docker image
+        run: docker build -t sampleapp:${BUILD_TAG} .
+
+      - name: Tag Docker image for Docker Hub
+        run: docker tag sampleapp:${BUILD_TAG} ${TF_VAR_dockerhub_username}/sampleapp:${BUILD_TAG}
+
+      - name: Push Docker image
+        run: docker push ${TF_VAR_dockerhub_username}/sampleapp:${BUILD_TAG}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init -backend-config="vars/${{ github.event.inputs.environment }}.backend.tfvars"
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -var-file="vars/${{ github.event.inputs.environment }}.tfvars" -var="build_tag=${BUILD_TAG}"
