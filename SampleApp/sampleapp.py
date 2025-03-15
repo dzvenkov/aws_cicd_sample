@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import urllib.request
+import os
+
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -11,7 +13,9 @@ class HealthHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
                 self.end_headers()
-                self.wfile.write(content)
+                buildTag = os.environ.get("BUILD_TAG", "unknown_tag")
+                envName = os.environ.get("ENVIRONMENT", "unknown_env") 
+                self.wfile.write(f"Server tag: {buildTag}; Env: {envName}\n".encode('utf-8') + content)
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "text/plain")

@@ -2,9 +2,23 @@ provider "aws" {
     region = "eu-north-1"  # Stockholm region
   }
   
+  terraform {
+    backend "s3" {
+      bucket   = "tfstate748914"           
+      region   = "eu-north-1"              
+      encrypt  = false ##removed encryption out of curiosity
+      #key - environment specific value 
+    }
+  }
+  
   ##########################
   # Variables
   ##########################
+  variable "environment" {
+    description = "Deployment environment (e.g., dev, staging, prod)"
+    type        = string
+  }
+  
   variable "dockerhub_username" {
     description = "DockerHub username"
     type        = string
@@ -14,12 +28,22 @@ provider "aws" {
     description = "DockerHub password"
     type        = string
   }
+
+  variable "build_tag" {
+    description = "Server docker image tag"
+    type        = string
+  }
   
   ##########################
   # Secrets Manager - Store DockerHub credentials
   ##########################
   resource "aws_secretsmanager_secret" "dockerhub" {
-    name = "dockerhub-credentials"
+    name = "${var.environment}-dockerhub-credentials"
+  
+    tags = {
+      Name        = "${var.environment}-dockerhub-credentials"
+      Environment = var.environment
+    }
   }
   
   resource "aws_secretsmanager_secret_version" "dockerhub" {
@@ -35,10 +59,20 @@ provider "aws" {
   ##########################
   resource "aws_vpc" "main" {
     cidr_block = "10.0.0.0/16"
+  
+    tags = {
+      Name        = "${var.environment}-main-vpc"
+      Environment = var.environment
+    }
   }
   
   resource "aws_internet_gateway" "igw" {
     vpc_id = aws_vpc.main.id
+  
+    tags = {
+      Name        = "${var.environment}-igw"
+      Environment = var.environment
+    }
   }
   
   resource "aws_subnet" "public" {
@@ -46,6 +80,11 @@ provider "aws" {
     cidr_block              = "10.0.1.0/24"
     availability_zone       = "eu-north-1a"
     map_public_ip_on_launch = true
+  
+    tags = {
+      Name        = "${var.environment}-public-subnet"
+      Environment = var.environment
+    }
   }
   
   resource "aws_route_table" "public" {
@@ -55,6 +94,11 @@ provider "aws" {
       cidr_block = "0.0.0.0/0"
       gateway_id = aws_internet_gateway.igw.id
     }
+  
+    tags = {
+      Name        = "${var.environment}-public-rt"
+      Environment = var.environment
+    }
   }
   
   resource "aws_route_table_association" "public" {
@@ -63,7 +107,7 @@ provider "aws" {
   }
   
   resource "aws_security_group" "ecs_sg" {
-    name        = "ecs-sg"
+    name        = "${var.environment}-ecs-sg"
     description = "Allow HTTP inbound"
     vpc_id      = aws_vpc.main.id
   
@@ -80,13 +124,18 @@ provider "aws" {
       protocol    = "-1"
       cidr_blocks = ["0.0.0.0/0"]
     }
+  
+    tags = {
+      Name        = "${var.environment}-ecs-sg"
+      Environment = var.environment
+    }
   }
   
   ##########################
   # IAM Role for ECS Task Execution and additional secret access
   ##########################
   resource "aws_iam_role" "ecs_task_execution_role" {
-    name = "ecsTaskExecutionRole"
+    name = "${var.environment}-ecsTaskExecutionRole"
     assume_role_policy = jsonencode({
       Version   = "2012-10-17",
       Statement = [{
@@ -95,6 +144,11 @@ provider "aws" {
         Principal = { Service = "ecs-tasks.amazonaws.com" }
       }]
     })
+  
+    tags = {
+      Name        = "${var.environment}-ecsTaskExecutionRole"
+      Environment = var.environment
+    }
   }
   
   resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
@@ -107,7 +161,7 @@ provider "aws" {
   
   # Additional policy to allow getting secrets from Secrets Manager
   resource "aws_iam_policy" "ecs_get_secret_policy" {
-    name        = "ecs-get-secret-policy"
+    name        = "${var.environment}-ecs-get-secret-policy"
     description = "Allow ECS tasks to retrieve DockerHub credentials from Secrets Manager"
     policy      = jsonencode({
       Version: "2012-10-17",
@@ -115,10 +169,15 @@ provider "aws" {
         {
           Action: ["secretsmanager:GetSecretValue"],
           Effect: "Allow",
-          Resource: "arn:aws:secretsmanager:eu-north-1:${data.aws_caller_identity.current.account_id}:secret:dockerhub-credentials-*"
+          Resource: "arn:aws:secretsmanager:eu-north-1:${data.aws_caller_identity.current.account_id}:secret:${var.environment}-dockerhub-credentials*"
         }
       ]
     })
+  
+    tags = {
+      Name        = "${var.environment}-ecs-get-secret-policy"
+      Environment = var.environment
+    }
   }
   
   resource "aws_iam_role_policy_attachment" "ecs_get_secret_attach" {
@@ -130,14 +189,19 @@ provider "aws" {
   # ECS Cluster
   ##########################
   resource "aws_ecs_cluster" "cluster" {
-    name = "sampleapp-cluster"
+    name = "${var.environment}-sampleapp-cluster"
+  
+    tags = {
+      Name        = "${var.environment}-sampleapp-cluster"
+      Environment = var.environment
+    }
   }
   
   ##########################
   # ECS Task Definition
   ##########################
   resource "aws_ecs_task_definition" "sampleapp" {
-    family                   = "sampleapp-task"
+    family                   = "${var.environment}-sampleapp-task"
     network_mode             = "awsvpc"
     requires_compatibilities = ["FARGATE"]
     cpu                      = "256"
@@ -145,29 +209,40 @@ provider "aws" {
     execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
     task_role_arn            = aws_iam_role.ecs_task_execution_role.arn
   
-    container_definitions = jsonencode([
-      {
+    container_definitions = jsonencode([{
         name  = "sampleapp"
-        image = "${var.dockerhub_username}/sampleapp:latest"
-        portMappings = [
-          {
-            containerPort = 80,
-            hostPort      = 80,
-            protocol      = "tcp"
-          }
-        ]
+        image = "${var.dockerhub_username}/sampleapp:${var.build_tag}"
+        portMappings = [{
+          containerPort = 80,
+          hostPort      = 80,
+          protocol      = "tcp"
+        }]
         repositoryCredentials = {
           credentialsParameter = aws_secretsmanager_secret.dockerhub.arn
         }
-      }
-    ])
+        environment = [
+          {
+            name  = "BUILD_TAG"
+            value = "${var.build_tag}"
+          },
+          {
+            name  = "ENVIRONMENT"
+            value = "${var.environment}"
+          }
+        ]
+      }])
+  
+    tags = {
+      Name        = "${var.environment}-sampleapp-task"
+      Environment = var.environment
+    }
   }
   
   ##########################
   # ECS Service
   ##########################
   resource "aws_ecs_service" "sampleapp" {
-    name            = "sampleapp-service"
+    name            = "${var.environment}-sampleapp-service"
     cluster         = aws_ecs_cluster.cluster.id
     task_definition = aws_ecs_task_definition.sampleapp.arn
     desired_count   = 1
@@ -177,6 +252,11 @@ provider "aws" {
       subnets         = [aws_subnet.public.id]
       security_groups = [aws_security_group.ecs_sg.id]
       assign_public_ip = true
+    }
+  
+    tags = {
+      Name        = "${var.environment}-sampleapp-service"
+      Environment = var.environment
     }
   }
   
