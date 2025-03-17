@@ -15,7 +15,7 @@ class HealthHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 buildTag = os.environ.get("BUILD_TAG", "unknown_tag")
                 settingsFile = os.environ.get("SETTINGS_FILE", "unknown_env") 
-                self.wfile.write(f"[1] Server tag: {buildTag}; Env: {settingsFile}\n".encode('utf-8') + content)
+                self.wfile.write(f"Server tag: {buildTag}; Settings: {settingsFile}\n".encode('utf-8') + content)
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "text/plain")
