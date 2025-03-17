@@ -7,15 +7,15 @@ terraform {
     bucket  = "tfstate748914"           
     region  = "eu-north-1"              
     encrypt = false # removed encryption out of curiosity
-    # key - environment specific value 
+    key = "main.tfstate"
   }
 }
 
 ##########################
 # Variables
 ##########################
-variable "environment" {
-  description = "Deployment environment (e.g., dev, staging, prod)"
+variable "app_prefix" {
+  description = "Application specific naming prefix"
   type        = string
 }
 
@@ -29,26 +29,40 @@ variable "dockerhub_password" {
   type        = string
 }
 
+variable "docker_image" {
+  description = "Docker image name"
+  type        = string
+}
+
 variable "build_tag1" {
-  description = "Server docker image tag for env 1"
+  description = "Server docker image tag for slot1"
   type        = string
 }
 
 variable "build_tag2" {
-  description = "Server docker image tag for env 2"
+  description = "Server docker image tag for slot2"
   type        = string
 }
 
+variable "slot1settings" {
+  description = "settings parameter for slot1"
+  type        = string
+}
+
+variable "slot2settings" {
+  description = "settings parameter for slot2"
+  type        = string
+}
 
 ##########################
 # Secrets Manager - Store DockerHub credentials
 ##########################
 resource "aws_secretsmanager_secret" "dockerhub" {
-  name = "${var.environment}-dockerhub-creds"
+  name = "${var.app_prefix}-dockerhub-creds"
 
   tags = {
-    Name        = "${var.environment}-dockerhub-creds"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-dockerhub-creds"
+    AppPrefix = var.app_prefix
   }
 }
 
@@ -67,8 +81,8 @@ resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
 
   tags = {
-    Name        = "${var.environment}-main-vpc"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-main-vpc"
+    AppPrefix = var.app_prefix
   }
 }
 
@@ -76,8 +90,8 @@ resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name        = "${var.environment}-igw"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-igw"
+    AppPrefix = var.app_prefix
   }
 }
 
@@ -88,8 +102,8 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name        = "${var.environment}-public-subnet"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-public-subnet"
+    AppPrefix = var.app_prefix
   }
 }
 
@@ -102,8 +116,8 @@ resource "aws_route_table" "public" {
   }
 
   tags = {
-    Name        = "${var.environment}-public-rt"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-public-rt"
+    AppPrefix = var.app_prefix
   }
 }
 
@@ -113,13 +127,20 @@ resource "aws_route_table_association" "public" {
 }
 
 resource "aws_security_group" "ecs_sg" {
-  name        = "${var.environment}-ecs-sg"
+  name        = "${var.app_prefix}-ecs-sg"
   description = "Allow HTTP inbound"
   vpc_id      = aws_vpc.main.id
 
   ingress {
     from_port   = 80
     to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -132,8 +153,8 @@ resource "aws_security_group" "ecs_sg" {
   }
 
   tags = {
-    Name        = "${var.environment}-ecs-sg"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-ecs-sg"
+    AppPrefix = var.app_prefix
   }
 }
 
@@ -141,7 +162,7 @@ resource "aws_security_group" "ecs_sg" {
 # IAM Role for ECS Task Execution and additional secret access
 ##########################
 resource "aws_iam_role" "ecs_task_execution_role" {
-  name = "${var.environment}-ecsTaskExecutionRole"
+  name = "${var.app_prefix}-ecsTaskExecutionRole"
   assume_role_policy = jsonencode({
     Version   = "2012-10-17",
     Statement = [{
@@ -152,8 +173,8 @@ resource "aws_iam_role" "ecs_task_execution_role" {
   })
 
   tags = {
-    Name        = "${var.environment}-ecsTaskExecutionRole"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-ecsTaskExecutionRole"
+    AppPrefix = var.app_prefix
   }
 }
 
@@ -165,7 +186,7 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
 data "aws_caller_identity" "current" {}
 
 resource "aws_iam_policy" "ecs_get_secret_policy" {
-  name        = "${var.environment}-ecs-get-secret-policy"
+  name        = "${var.app_prefix}-ecs-get-secret-policy"
   description = "Allow ECS tasks to retrieve DockerHub credentials from Secrets Manager"
   policy      = jsonencode({
     Version: "2012-10-17",
@@ -173,14 +194,14 @@ resource "aws_iam_policy" "ecs_get_secret_policy" {
       {
         Action: ["secretsmanager:GetSecretValue"],
         Effect: "Allow",
-        Resource: "arn:aws:secretsmanager:eu-north-1:${data.aws_caller_identity.current.account_id}:secret:${var.environment}-dockerhub-creds*"
+        Resource: "arn:aws:secretsmanager:eu-north-1:${data.aws_caller_identity.current.account_id}:secret:${var.app_prefix}-dockerhub-creds*"
       }
     ]
   })
 
   tags = {
-    Name        = "${var.environment}-ecs-get-secret-policy"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-ecs-get-secret-policy"
+    AppPrefix = var.app_prefix
   }
 }
 
@@ -193,11 +214,11 @@ resource "aws_iam_role_policy_attachment" "ecs_get_secret_attach" {
 # ECS Cluster
 ##########################
 resource "aws_ecs_cluster" "cluster" {
-  name = "${var.environment}-sampleapp-cluster"
+  name = "${var.app_prefix}-cluster"
 
   tags = {
-    Name        = "${var.environment}-sampleapp-cluster"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-cluster"
+    AppPrefix = var.app_prefix
   }
 }
 
@@ -205,7 +226,7 @@ resource "aws_ecs_cluster" "cluster" {
 # IAM Role for ECS Container Instance (EC2)
 ##########################
 resource "aws_iam_role" "ecs_instance_role" {
-  name = "${var.environment}-ecs-instance-role"
+  name = "${var.app_prefix}-ecs-instance-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -215,8 +236,8 @@ resource "aws_iam_role" "ecs_instance_role" {
     }]
   })
   tags = {
-    Name        = "${var.environment}-ecs-instance-role"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-ecs-instance-role"
+    AppPrefix = var.app_prefix
   }
 }
 
@@ -226,7 +247,7 @@ resource "aws_iam_role_policy_attachment" "ecs_instance_role_policy" {
 }
 
 resource "aws_iam_instance_profile" "ecs_instance_profile" {
-  name = "${var.environment}-ecs-instance-profile"
+  name = "${var.app_prefix}-ecs-instance-profile"
   role = aws_iam_role.ecs_instance_role.name
 }
 
@@ -260,16 +281,16 @@ echo "ECS_CLUSTER=${aws_ecs_cluster.cluster.name}" >> /etc/ecs/ecs.config
 EOF
 
   tags = {
-    Name        = "${var.environment}-ecs-instance"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-ecs-instance"
+    AppPrefix = var.app_prefix
   }
 }
 
 ##########################
-# ECS Task Definition (Modified for EC2)
+# ECS Task Definition 
 ##########################
 resource "aws_ecs_task_definition" "sampleapp" {
-  family                   = "${var.environment}-sampleapp-task"
+  family                   = "${var.app_prefix}-task"
   network_mode             = "bridge"
   requires_compatibilities = ["EC2"]
   cpu                      = "256"
@@ -278,8 +299,8 @@ resource "aws_ecs_task_definition" "sampleapp" {
   task_role_arn            = aws_iam_role.ecs_task_execution_role.arn
 
   container_definitions = jsonencode([{
-      name  = "envcontainer1"
-      image = "${var.dockerhub_username}/sampleapp:${var.build_tag1}"
+      name  = "slot1container"
+      image = "${var.dockerhub_username}/${var.docker_image}:${var.build_tag1}"
       portMappings = [{
         containerPort = 80,
         hostPort      = 80,
@@ -294,14 +315,14 @@ resource "aws_ecs_task_definition" "sampleapp" {
           value = "${var.build_tag1}"
         },
         {
-          name  = "ENVIRONMENT"
-          value = "${var.environment}"
+          name  = "SETTINGS_FILE"
+          value = "${var.slot1settings}"
         }
       ]
     },
     {
-      name  = "envcontainer2"
-      image = "${var.dockerhub_username}/sampleapp:${var.build_tag2}"
+      name  = "slot2container"
+      image = "${var.dockerhub_username}/${var.docker_image}:${var.build_tag2}"
       portMappings = [{
         containerPort = 80,
         hostPort      = 8080,
@@ -316,32 +337,32 @@ resource "aws_ecs_task_definition" "sampleapp" {
           value = "${var.build_tag2}"
         },
         {
-          name  = "ENVIRONMENT"
-          value = "${var.environment}"
+          name  = "SETTINGS_FILE"
+          value = "${var.slot2settings}"
         }
       ]
     }
     ])
 
   tags = {
-    Name        = "${var.environment}-sampleapp-task"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-task"
+    AppPrefix = var.app_prefix
   }
 }
 
 ##########################
-# ECS Service (Modified for EC2)
+# ECS Service 
 ##########################
 resource "aws_ecs_service" "sampleapp" {
-  name            = "${var.environment}-sampleapp-service"
+  name            = "${var.app_prefix}-service"
   cluster         = aws_ecs_cluster.cluster.id
   task_definition = aws_ecs_task_definition.sampleapp.arn
   desired_count   = 1
-  launch_type     = "EC2"      # Changed from FARGATE
+  launch_type     = "EC2"
 
   # Note: With EC2 launch type and bridge networking, the network_configuration block is not required.
   tags = {
-    Name        = "${var.environment}-sampleapp-service"
-    Environment = var.environment
+    Name        = "${var.app_prefix}-service"
+    AppPrefix = var.app_prefix
   }
 }
