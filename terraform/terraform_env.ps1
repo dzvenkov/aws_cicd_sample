@@ -3,17 +3,29 @@
 $envname = $args[0]
 echo "Environment: $envname"
 
-$build_tag = $args[1]
-echo "Server image tag: $build_tag"
+
 
 if (-not $envname) {
     Write-Error "<environment name> <server image tag> are expected as an argument."
     exit 1
 }
 
-if (-not $build_tag) {
-    Write-Error "<environment name> <server image tag> are expected as an argument."
-    exit 1
+if (-not $args -contains "--destroy") {
+    $build_tag1 = $args[1]
+    echo "Server image tag for env1: $build_tag1"
+    
+    $build_tag2 = $args[2]
+    echo "Server image tag for env1: $build_tag2"
+    
+    if (-not $build_tag1) {
+        Write-Error "<environment name> <server image tag> are expected as an argument."
+        exit 1
+    }
+
+    if (-not $build_tag2) {
+        Write-Error "<environment name> <server image tag> are expected as an argument."
+        exit 1
+    }
 }
 
 
@@ -56,13 +68,13 @@ if ($dryRun -and $destroy) {
 
 if ($dryRun) {
     echo "Executing Terraform plan (--dry)"
-    ./terraform.exe plan -var-file="vars/${envname}.tfvars" -var="build_tag=${build_tag}"
+    ./terraform.exe plan -var-file="vars/${envname}.tfvars" -var="build_tag1=${build_tag1}" -var="build_tag2=${build_tag2}"
 }
 elseif ($destroy) {
     echo "Executing Terraform destroy (--destroy)"
-    ./terraform.exe destroy -auto-approve -var-file="vars/${envname}.tfvars" -var="build_tag=${build_tag}"
+    ./terraform.exe destroy -auto-approve -var-file="vars/${envname}.tfvars" 
 }
 else {
     echo "Executing Terraform apply"
-    ./terraform.exe apply -auto-approve -var-file="vars/${envname}.tfvars" -var="build_tag=${build_tag}"
+    ./terraform.exe apply -auto-approve -var-file="vars/${envname}.tfvars" -var="build_tag1=${build_tag1}" -var="build_tag1=${build_tag1}"
 }
